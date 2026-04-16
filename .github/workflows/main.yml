@@ -9,13 +9,10 @@ on:
       - "rules/**.yml"
   workflow_dispatch:
 
-# Belt-and-suspenders: even if the host pip config is missing, pip will
-# still install on externally-managed Python 3.12 without erroring.
 env:
   PIP_BREAK_SYSTEM_PACKAGES: "1"
 
 jobs:
-  # Step 1: Validate Sigma rules
   validate:
     runs-on: splunk-serv
     steps:
@@ -36,7 +33,6 @@ jobs:
             ./rules
           schemaFile: ${{ github.workspace }}/sigma-schema.json
 
-  # Step 2: Convert and deploy only changed rules
   convert-and-deploy:
     needs: validate
     runs-on: splunk-serv
@@ -77,6 +73,8 @@ jobs:
           SPLUNK_TOKEN: ${{ secrets.SPLUNK_API_TOKEN }}
           CHANGED_FILES: ${{ steps.changed-files.outputs.changed_files }}
         run: |
+          set -uo pipefail
+
           if [ -z "$CHANGED_FILES" ]; then
             echo "No Sigma rules were modified in this commit."
             exit 0
@@ -91,7 +89,6 @@ jobs:
             echo "------------------------------------"
             echo "Processing $file (rule: $rule_name)"
 
-            # Convert the rule to SPL (suppress stderr so it doesn't pollute the query)
             echo "Converting to Splunk SPL..."
             spl_query=$(sigma convert -t splunk -f default "$file" --without-pipeline 2>/dev/null)
 
@@ -100,29 +97,29 @@ jobs:
               failure_count=$((failure_count + 1))
               continue
             fi
-
             echo "✓ SPL query generated successfully"
 
             echo "Deploying to Splunk..."
-            if python scripts/deploy_to_splunk.py \
-                --url "$SPLUNK_URL" \
-                --token "$SPLUNK_TOKEN" \
-                --rule "$rule_name" \
-                --query "$spl_query" \
-                --actions "log" --insecure \ 
-                 ; then
+            deploy_args=(
+              --url      "$SPLUNK_URL"
+              --token    "$SPLUNK_TOKEN"
+              --rule     "$rule_name"
+              --query    "$spl_query"
+              --actions  "log"
+              --insecure
+            )
+
+            if python scripts/deploy_to_splunk.py "${deploy_args[@]}"; then
               echo "✓ Rule deployed successfully to Splunk"
               success_count=$((success_count + 1))
             else
               echo "× ERROR: Failed to deploy rule to Splunk"
               failure_count=$((failure_count + 1))
             fi
-
             echo "------------------------------------"
           done <<< "$CHANGED_FILES"
 
           echo "Conversion and deployment complete:"
           echo "Success: $success_count rules"
           echo "Failures: $failure_count rules"
-
           exit 0
