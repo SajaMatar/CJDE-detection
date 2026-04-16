@@ -109,8 +109,8 @@ jobs:
                 --token "$SPLUNK_TOKEN" \
                 --rule "$rule_name" \
                 --query "$spl_query" \
-                --actions "log" \ 
-                --insecure ; then
+                --actions "log" --insecure \ 
+                 ; then
               echo "✓ Rule deployed successfully to Splunk"
               success_count=$((success_count + 1))
             else
